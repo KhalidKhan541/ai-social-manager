@@ -1,0 +1,552 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth & Users ──────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          UserRole  @default(MEMBER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts          Account[]
+  sessions          Session[]
+  memberships       Membership[]
+  ownedOrgs         Organization[]         @relation("OrgOwner")
+  posts             Post[]                 @relation("PostAuthor")
+  scheduledPosts    Post[]                 @relation("PostScheduler")
+  publishedPosts    Post[]                 @relation("PostPublisher")
+  calendarEvents    CalendarEvent[]
+  comments          Comment[]
+  mediaFiles        Media[]
+  teamInvites       TeamInvite[]
+  activityLogs      ActivityLog[]
+  campaignMembers   CampaignMember[]
+  generatedContents AIGeneratedContent[]
+
+  @@index([email])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  @@unique([identifier, token])
+}
+
+// ─── Organizations ──────────────────────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  logo      String?
+  ownerId   String
+  plan      Plan     @default(FREE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner          User              @relation("OrgOwner", fields: [ownerId], references: [id])
+  memberships    Membership[]
+  socialAccounts SocialAccount[]
+  posts          Post[]
+  campaigns      Campaign[]
+  calendarEvents CalendarEvent[]
+  mediaFiles     Media[]
+  reports        AnalyticsReport[]
+  inboxItems     InboxItem[]
+  teamInvites    TeamInvite[]
+  subscriptions  Subscription[]
+  billingInfo    BillingInfo?
+
+  @@index([slug])
+  @@index([ownerId])
+}
+
+model Membership {
+  id     String @id @default(cuid())
+  role   OrgRole @default(MEMBER)
+  userId String
+  orgId  String
+
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+}
+
+model TeamInvite {
+  id        String     @id @default(cuid())
+  email     String
+  role      OrgRole    @default(MEMBER)
+  token     String     @unique
+  userId    String
+  orgId     String
+  expiresAt DateTime
+  createdAt DateTime   @default(now())
+
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([email, orgId])
+}
+
+// ─── Social Accounts ────────────────────────────────────────────────────────────
+
+model SocialAccount {
+  id              String   @id @default(cuid())
+  platform        Platform
+  platformUserId  String
+  username        String
+  displayName     String?
+  avatar          String?
+  accessToken     String   @db.Text
+  refreshToken    String?  @db.Text
+  tokenExpiresAt  DateTime?
+  scopes          String[]
+  orgId           String
+  isActive        Boolean  @default(true)
+  lastSyncedAt    DateTime?
+  followers       Int      @default(0)
+  following       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org         Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  posts       Post[]
+  inboxItems  InboxItem[]
+  analytics   SocialAccountAnalytics[]
+
+  @@unique([platform, platformUserId, orgId])
+  @@index([orgId])
+  @@index([platform])
+}
+
+model SocialAccountAnalytics {
+  id              String   @id @default(cuid())
+  socialAccountId String
+  date            DateTime @db.Date
+  followers       Int      @default(0)
+  following       Int      @default(0)
+  impressions     Int      @default(0)
+  reach           Int      @default(0)
+  engagement      Float    @default(0)
+  posts           Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([socialAccountId, date])
+  @@index([socialAccountId, date])
+}
+
+// ─── Posts ──────────────────────────────────────────────────────────────────────
+
+model Post {
+  id             String     @id @default(cuid())
+  content        String     @db.Text
+  mediaUrls      String[]
+  hashtags       String[]
+  mentions       String[]
+  status         PostStatus @default(DRAFT)
+  scheduledAt    DateTime?
+  publishedAt    DateTime?
+  platformPostId String?
+  authorId       String
+  schedulerId    String?
+  publisherId    String?
+  orgId          String
+  accountId      String?
+  campaignId     String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  author     User          @relation("PostAuthor", fields: [authorId], references: [id])
+  scheduler  User?         @relation("PostScheduler", fields: [schedulerId], references: [id])
+  publisher  User?         @relation("PostPublisher", fields: [publisherId], references: [id])
+  org        Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  account    SocialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  campaign   Campaign?     @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  analytics  PostAnalytics[]
+  calendar   CalendarEvent?
+  comments   Comment[]
+
+  @@index([orgId, status])
+  @@index([scheduledAt])
+  @@index([authorId])
+  @@index([campaignId])
+}
+
+model PostAnalytics {
+  id          String   @id @default(cuid())
+  postId      String
+  impressions Int      @default(0)
+  reach       Int      @default(0)
+  likes       Int      @default(0)
+  comments    Int      @default(0)
+  shares      Int      @default(0)
+  clicks      Int      @default(0)
+  saves       Int      @default(0)
+  engagement  Float    @default(0)
+  date        DateTime @db.Date
+  createdAt   DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, date])
+  @@index([postId])
+}
+
+// ─── Campaigns ──────────────────────────────────────────────────────────────────
+
+model Campaign {
+  id          String         @id @default(cuid())
+  name        String
+  description String?
+  status      CampaignStatus @default(DRAFT)
+  startDate   DateTime?
+  endDate     DateTime?
+  budget      Float?
+  goals       Json?
+  orgId       String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  org       Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  posts     Post[]
+  members   CampaignMember[]
+
+  @@index([orgId, status])
+}
+
+model CampaignMember {
+  id         String @id @default(cuid())
+  campaignId String
+  userId     String
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, userId])
+}
+
+// ─── Calendar ───────────────────────────────────────────────────────────────────
+
+model CalendarEvent {
+  id          String      @id @default(cuid())
+  title       String
+  description String?
+  startAt     DateTime
+  endAt       DateTime
+  allDay      Boolean     @default(false)
+  color       String?
+  userId      String
+  orgId       String
+  postId      String?     @unique
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  post Post?        @relation(fields: [postId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, startAt, endAt])
+  @@index([userId])
+}
+
+// ─── Inbox ──────────────────────────────────────────────────────────────────────
+
+model InboxItem {
+  id              String      @id @default(cuid())
+  type            InboxType
+  platformItemId  String
+  content         String      @db.Text
+  authorName      String
+  authorAvatar    String?
+  authorUsername  String?
+  status          InboxStatus @default(UNREAD)
+  sentiment       Sentiment?
+  isReplied       Boolean     @default(false)
+  orgId           String
+  accountId       String
+  parentId        String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  org    Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  account SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  parent InboxItem?    @relation("InboxReplies", fields: [parentId], references: [id])
+  replies InboxItem[]   @relation("InboxReplies")
+
+  @@index([orgId, status])
+  @@index([accountId])
+  @@index([createdAt])
+}
+
+// ─── Media ──────────────────────────────────────────────────────────────────────
+
+model Media {
+  id          String   @id @default(cuid())
+  url         String
+  type        MediaType
+  filename    String
+  fileSize    Int
+  mimeType    String
+  width       Int?
+  height      Int?
+  alt         String?
+  userId      String
+  orgId       String
+  createdAt   DateTime @default(now())
+
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([userId])
+}
+
+// ─── Analytics & Reports ────────────────────────────────────────────────────────
+
+model AnalyticsReport {
+  id          String     @id @default(cuid())
+  title       String
+  type        ReportType
+  dateRange   Json
+  data        Json
+  generatedAt DateTime @default(now())
+  orgId       String
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, type])
+}
+
+// ─── AI ─────────────────────────────────────────────────────────────────────────
+
+model AIGeneratedContent {
+  id        String   @id @default(cuid())
+  type      AIGenerateType
+  prompt    String   @db.Text
+  result    String   @db.Text
+  model     String
+  tokens    Int?
+  userId    String
+  orgId     String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([orgId])
+}
+
+// ─── Billing ────────────────────────────────────────────────────────────────────
+
+model Subscription {
+  id                 String   @id @default(cuid())
+  stripeCustomerId   String?  @unique
+  stripeSubscriptionId String? @unique
+  stripePriceId      String?
+  plan               Plan     @default(FREE)
+  status             SubStatus @default(ACTIVE)
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean  @default(false)
+  orgId              String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+model BillingInfo {
+  id            String  @id @default(cuid())
+  orgId         String  @unique
+  name          String?
+  email         String?
+  address       Json?
+  taxId         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+// ─── Activity Log ───────────────────────────────────────────────────────────────
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  action    String
+  entity    String
+  entityId  String?
+  details   Json?
+  userId    String
+  orgId     String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([userId])
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  MEMBER
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  EDITOR
+  MEMBER
+  VIEWER
+}
+
+enum Plan {
+  FREE
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+enum Platform {
+  TWITTER
+  INSTAGRAM
+  LINKEDIN
+  FACEBOOK
+  TIKTOK
+  YOUTUBE
+  PINTEREST
+  THREADS
+  MASTODON
+  BLUESKY
+}
+
+enum PostStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  ARCHIVED
+}
+
+enum PostType {
+  SINGLE
+  THREAD
+  CAROUSEL
+  STORY
+  REEL
+  VIDEO
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum InboxType {
+  COMMENT
+  MENTION
+  DM
+  REVIEW
+  TAG
+}
+
+enum InboxStatus {
+  UNREAD
+  READ
+  REPLIED
+  ARCHIVED
+  FLAGGED
+}
+
+enum Sentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  GIF
+  DOCUMENT
+}
+
+enum ReportType {
+  OVERVIEW
+  PLATFORM
+  CAMPAIGN
+  AUDIENCE
+  COMPETITOR
+  CUSTOM
+}
+
+enum AIGenerateType {
+  POST
+  THREAD
+  CAPTION
+  HASHTAGS
+  CALENDAR
+  OPTIMIZE
+  SENTIMENT
+  REPURPOSE
+}
+
+enum SubStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  TRIALING
+}
