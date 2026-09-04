@@ -1,126 +1,306 @@
-"use client"
+import { useState, useEffect, useCallback, useRef } from "react";
 
-import * as React from "react"
-import { useQuery, useMutation, UseQueryOptions, UseMutationOptions } from "@tanstack/react-query"
-
-interface UseFetchOptions<TData, TError> extends UseQueryOptions<TData, TError> {
-  url: string
-  headers?: Record<string, string>
+interface UseFetchOptions extends RequestInit {
+  immediate?: boolean;
+  onSuccess?: (data: unknown) => void;
+  onError?: (error: Error) => void;
+  onFinally?: () => void;
 }
 
-export function useFetch<TData = unknown, TError = Error>({
-  url,
-  headers,
-  ...options
-}: UseFetchOptions<TData, TError>) {
-  return useQuery<TData, TError>({
-    queryKey: options.queryKey || [url],
-    queryFn: async () => {
-      const response = await fetch(url, {
-        headers: {
-          "Content-Type": "application/json",
-          ...headers,
-        },
-      })
+interface UseFetchResult<T> {
+  data: T | null;
+  error: Error | null;
+  isLoading: boolean;
+  isSuccess: boolean;
+  isError: boolean;
+  execute: (url?: string, options?: RequestInit) => Promise<T | null>;
+  reset: () => void;
+}
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+export function useFetch<T = unknown>(
+  url: string | null,
+  options?: UseFetchOptions
+): UseFetchResult<T> {
+  const { immediate = true, onSuccess, onError, onFinally, ...fetchOptions } = options || {};
+
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+
+  const execute = useCallback(
+    async (executeUrl?: string, executeOptions?: RequestInit): Promise<T | null> => {
+      const targetUrl = executeUrl || url;
+      if (!targetUrl) return null;
+
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
 
-      return response.json()
-    },
-    ...options,
-  })
-}
+      abortControllerRef.current = new AbortController();
+      setIsLoading(true);
+      setError(null);
 
-interface UsePostOptions<TData, TError, TVariables> extends UseMutationOptions<TData, TError, TVariables> {
-  url: string
-  headers?: Record<string, string>
-}
+      try {
+        const response = await fetch(targetUrl, {
+          ...fetchOptions,
+          ...executeOptions,
+          signal: abortControllerRef.current.signal,
+        });
 
-export function usePost<TData = unknown, TError = Error, TVariables = unknown>({
-  url,
-  headers,
-  ...options
-}: UsePostOptions<TData, TError, TVariables>) {
-  return useMutation<TData, TError, TVariables>({
-    mutationFn: async (variables) => {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...headers,
-        },
-        body: JSON.stringify(variables),
-      })
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(
+            errorData.message || `HTTP error! status: ${response.status}`
+          );
+        }
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        const result = await response.json();
+        
+        if (mountedRef.current) {
+          setData(result);
+          setIsLoading(false);
+          onSuccess?.(result);
+        }
+        
+        return result;
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          return null;
+        }
+
+        if (mountedRef.current) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          setError(error);
+          setIsLoading(false);
+          onError?.(error);
+        }
+        
+        return null;
+      } finally {
+        if (mountedRef.current) {
+          setIsLoading(false);
+          onFinally?.();
+        }
       }
-
-      return response.json()
     },
-    ...options,
-  })
-}
+    [url, fetchOptions, onSuccess, onError, onFinally]
+  );
 
-interface UsePutOptions<TData, TError, TVariables> extends UseMutationOptions<TData, TError, TVariables> {
-  url: string
-  headers?: Record<string, string>
-}
+  const reset = useCallback(() => {
+    setData(null);
+    setError(null);
+    setIsLoading(false);
+  }, []);
 
-export function usePut<TData = unknown, TError = Error, TVariables = unknown>({
-  url,
-  headers,
-  ...options
-}: UsePutOptions<TData, TError, TVariables>) {
-  return useMutation<TData, TError, TVariables>({
-    mutationFn: async (variables) => {
-      const response = await fetch(url, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...headers,
-        },
-        body: JSON.stringify(variables),
-      })
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+  useEffect(() => {
+    if (immediate && url) {
+      execute();
+    }
+
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
+    };
+  }, [url, immediate]);
 
-      return response.json()
-    },
-    ...options,
-  })
+  return {
+    data,
+    error,
+    isLoading,
+    isSuccess: data !== null && error === null,
+    isError: error !== null,
+    execute,
+    reset,
+  };
 }
 
-interface UseDeleteOptions<TData, TError> extends UseMutationOptions<TData, TError, void> {
-  url: string
-  headers?: Record<string, string>
-}
+export function useMutation<TData = unknown, TVariables = unknown>(
+  mutationFn: (variables: TVariables) => Promise<TData>,
+  options?: {
+    onSuccess?: (data: TData, variables: TVariables) => void;
+    onError?: (error: Error, variables: TVariables) => void;
+    onSettled?: (
+      data: TData | null,
+      error: Error | null,
+      variables: TVariables
+    ) => void;
+  }
+): {
+  mutate: (variables: TVariables) => void;
+  mutateAsync: (variables: TVariables) => Promise<TData>;
+  data: TData | null;
+  error: Error | null;
+  isLoading: boolean;
+  isSuccess: boolean;
+  isError: boolean;
+  reset: () => void;
+} {
+  const [data, setData] = useState<TData | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const mountedRef = useRef(true);
 
-export function useDelete<TData = unknown, TError = Error>({
-  url,
-  headers,
-  ...options
-}: UseDeleteOptions<TData, TError>) {
-  return useMutation<TData, TError, void>({
-    mutationFn: async () => {
-      const response = await fetch(url, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          ...headers,
-        },
-      })
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+  const mutateAsync = useCallback(
+    async (variables: TVariables): Promise<TData> => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const result = await mutationFn(variables);
+        
+        if (mountedRef.current) {
+          setData(result);
+          setIsLoading(false);
+          options?.onSuccess?.(result, variables);
+          options?.onSettled?.(result, null, variables);
+        }
+        
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        
+        if (mountedRef.current) {
+          setError(error);
+          setIsLoading(false);
+          options?.onError?.(error, variables);
+          options?.onSettled?.(null, error, variables);
+        }
+        
+        throw error;
       }
-
-      return response.json()
     },
-    ...options,
-  })
+    [mutationFn, options]
+  );
+
+  const mutate = useCallback(
+    (variables: TVariables) => {
+      mutateAsync(variables).catch(() => {});
+    },
+    [mutateAsync]
+  );
+
+  const reset = useCallback(() => {
+    setData(null);
+    setError(null);
+    setIsLoading(false);
+  }, []);
+
+  return {
+    mutate,
+    mutateAsync,
+    data,
+    error,
+    isLoading,
+    isSuccess: data !== null && error === null,
+    isError: error !== null,
+    reset,
+  };
+}
+
+export function useInfiniteScroll<T>(
+  fetchFn: (page: number) => Promise<{ data: T[]; hasMore: boolean }>,
+  options?: {
+    initialPage?: number;
+    enabled?: boolean;
+  }
+): {
+  data: T[];
+  isLoading: boolean;
+  isLoadingMore: boolean;
+  hasMore: boolean;
+  error: Error | null;
+  loadMore: () => void;
+  refresh: () => void;
+} {
+  const { initialPage = 1, enabled = true } = options || {};
+  
+  const [data, setData] = useState<T[]>([]);
+  const [page, setPage] = useState(initialPage);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const loadPage = useCallback(
+    async (pageNum: number, append: boolean = false) => {
+      if (!enabled) return;
+
+      if (append) {
+        setIsLoadingMore(true);
+      } else {
+        setIsLoading(true);
+      }
+      setError(null);
+
+      try {
+        const result = await fetchFn(pageNum);
+        
+        if (mountedRef.current) {
+          setData((prev) => (append ? [...prev, ...result.data] : result.data));
+          setHasMore(result.hasMore);
+          setPage(pageNum);
+        }
+      } catch (err) {
+        if (mountedRef.current) {
+          setError(err instanceof Error ? err : new Error(String(err)));
+        }
+      } finally {
+        if (mountedRef.current) {
+          setIsLoading(false);
+          setIsLoadingMore(false);
+        }
+      }
+    },
+    [fetchFn, enabled]
+  );
+
+  useEffect(() => {
+    loadPage(initialPage);
+  }, [loadPage, initialPage]);
+
+  const loadMore = useCallback(() => {
+    if (hasMore && !isLoadingMore) {
+      loadPage(page + 1, true);
+    }
+  }, [hasMore, isLoadingMore, page, loadPage]);
+
+  const refresh = useCallback(() => {
+    setData([]);
+    loadPage(initialPage);
+  }, [loadPage, initialPage]);
+
+  return {
+    data,
+    isLoading,
+    isLoadingMore,
+    hasMore,
+    error,
+    loadMore,
+    refresh,
+  };
 }
