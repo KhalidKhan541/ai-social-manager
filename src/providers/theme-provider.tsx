@@ -1,74 +1,95 @@
-"use client"
+"use client";
 
-import * as React from "react"
+import * as React from "react";
+import { ThemeProvider as NextThemesProvider } from "next-themes";
+import { type ThemeProviderProps } from "next-themes/dist/types";
 
-type Theme = "light" | "dark" | "system"
-
-interface ThemeProviderState {
-  theme: Theme
-  setTheme: (theme: Theme) => void
+export function ThemeProvider({ children, ...props }: ThemeProviderProps) {
+  return <NextThemesProvider {...props}>{children}</NextThemesProvider>;
 }
 
-const ThemeProviderContext = React.createContext<ThemeProviderState | undefined>(
-  undefined
-)
-
-interface ThemeProviderProps {
-  children: React.ReactNode
-  defaultTheme?: Theme
-  storageKey?: string
+export function useTheme() {
+  const context = React.useContext(ThemeContext);
+  if (context === undefined) {
+    throw new Error("useTheme must be used within a ThemeProvider");
+  }
+  return context;
 }
 
-export function ThemeProvider({
+interface ThemeContextValue {
+  theme: "light" | "dark" | "system";
+  setTheme: (theme: "light" | "dark" | "system") => void;
+  resolvedTheme: "light" | "dark";
+  themes: string[];
+}
+
+const ThemeContext = React.createContext<ThemeContextValue | undefined>(undefined);
+
+export function ThemeProviderCustom({
   children,
   defaultTheme = "system",
-  storageKey = "socialai-theme",
-}: ThemeProviderProps) {
-  const [theme, setTheme] = React.useState<Theme>(() => {
-    if (typeof window !== "undefined") {
-      return (localStorage.getItem(storageKey) as Theme) || defaultTheme
+  storageKey = "theme",
+}: {
+  children: React.ReactNode;
+  defaultTheme?: "light" | "dark" | "system";
+  storageKey?: string;
+}) {
+  const [theme, setThemeState] = React.useState<"light" | "dark" | "system">(
+    () => {
+      if (typeof window === "undefined") return defaultTheme;
+      const stored = localStorage.getItem(storageKey) as typeof theme;
+      return stored || defaultTheme;
     }
-    return defaultTheme
-  })
+  );
+
+  const [resolvedTheme, setResolvedTheme] = React.useState<"light" | "dark">(
+    "light"
+  );
 
   React.useEffect(() => {
-    const root = window.document.documentElement
-    root.classList.remove("light", "dark")
+    const root = window.document.documentElement;
+    root.classList.remove("light", "dark");
 
+    let resolved = theme;
     if (theme === "system") {
       const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
         .matches
         ? "dark"
-        : "light"
-      root.classList.add(systemTheme)
-      return
+        : "light";
+      resolved = systemTheme;
     }
 
-    root.classList.add(theme)
-  }, [theme])
+    root.classList.add(resolved);
+    setResolvedTheme(resolved);
+    localStorage.setItem(storageKey, theme);
+  }, [theme, storageKey]);
 
-  const value = React.useMemo(
-    () => ({
-      theme,
-      setTheme: (theme: Theme) => {
-        localStorage.setItem(storageKey, theme)
-        setTheme(theme)
-      },
-    }),
-    [theme, storageKey]
-  )
+  React.useEffect(() => {
+    if (theme !== "system") return;
 
-  return (
-    <ThemeProviderContext.Provider value={value}>
-      {children}
-    </ThemeProviderContext.Provider>
-  )
-}
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => {
+      const root = window.document.documentElement;
+      root.classList.remove("light", "dark");
+      const newTheme = mediaQuery.matches ? "dark" : "light";
+      root.classList.add(newTheme);
+      setResolvedTheme(newTheme);
+    };
 
-export function useTheme() {
-  const context = React.useContext(ThemeProviderContext)
-  if (context === undefined) {
-    throw new Error("useTheme must be used within a ThemeProvider")
-  }
-  return context
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [theme]);
+
+  const setTheme = React.useCallback((newTheme: "light" | "dark" | "system") => {
+    setThemeState(newTheme);
+  }, []);
+
+  const value: ThemeContextValue = {
+    theme,
+    setTheme,
+    resolvedTheme,
+    themes: ["light", "dark", "system"],
+  };
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
