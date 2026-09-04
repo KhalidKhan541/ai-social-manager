@@ -424,10 +424,8 @@ export const useAppStore = create<AppState>((set) => ({
   addPost: (post) => set((state) => ({ posts: [post, ...state.posts] })),
   markInboxRead: (id) =>
     set((state) => ({
-      inboxItems: state.inventoryItems
-        ? state.inboxItems
-        : state.inboxItems.map((item) =>
-            item.id === id ? { ...item, read: true } : item
-          ),
+      inboxItems: state.inboxItems.map((item) =>
+        item.id === id ? { ...item, read: true } : item
+      ),
     })),
 }));
