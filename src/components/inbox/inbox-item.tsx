@@ -1,127 +1,186 @@
-"use client";
+'use client'
 
-import { cn, PLATFORMS, formatRelativeTime } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  MessageCircle,
-  AtSign,
-  Mail,
-  Star,
-  Reply,
-  MoreHorizontal,
-  Check,
-  CheckCheck,
-} from "lucide-react";
+import React, { useState } from 'react'
+import type { Notification, NotificationType } from '@/types'
+import { format, formatDistanceToNow } from 'date-fns'
 
-interface InboxItemProps {
-  item: {
-    id: string;
-    platform: string;
-    type: string;
-    content: string;
-    author: string;
-    authorAvatar?: string;
-    read: boolean;
-    replied: boolean;
-    createdAt: string;
-  };
-  onSelect?: (id: string) => void;
+export interface InboxItemProps {
+  notification: Notification
+  onMarkAsRead?: (id: string) => void
+  onDelete?: (id: string) => void
+  onAction?: (id: string, actionUrl: string) => void
+  isLoading?: boolean
 }
 
-const typeIcons: Record<string, React.ElementType> = {
-  comment: MessageCircle,
-  mention: AtSign,
-  dm: Mail,
-  review: Star,
-};
+const NOTIFICATION_CONFIG: Record<NotificationType, { icon: string; color: string }> = {
+  POST_PUBLISHED: { icon: '\u2713', color: 'bg-green-100 text-green-600' },
+  POST_FAILED: { icon: '\u2717', color: 'bg-red-100 text-red-600' },
+  COMMENT_RECEIVED: { icon: '\u270E', color: 'bg-blue-100 text-blue-600' },
+  CAMPAIGN_UPDATE: { icon: '\u2605', color: 'bg-yellow-100 text-yellow-600' },
+  SYSTEM: { icon: '\u2139', color: 'bg-gray-100 text-gray-600' },
+  BILLING: { icon: '\u2696', color: 'bg-purple-100 text-purple-600' },
+}
 
-export function InboxItem({ item, onSelect }: InboxItemProps) {
-  const TypeIcon = typeIcons[item.type] || MessageCircle;
-  const platformColor =
-    PLATFORMS[item.platform as keyof typeof PLATFORMS]?.color ?? "#888";
+export function InboxItem({
+  notification,
+  onMarkAsRead,
+  onDelete,
+  onAction,
+  isLoading = false,
+}: InboxItemProps) {
+  const [showActions, setShowActions] = useState(false)
+  const config = NOTIFICATION_CONFIG[notification.type]
+  const timeAgo = formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })
+
+  const handleClick = () => {
+    if (!notification.read && onMarkAsRead) {
+      onMarkAsRead(notification.id)
+    }
+    if (notification.actionUrl && onAction) {
+      onAction(notification.id, notification.actionUrl)
+    }
+  }
 
   return (
     <div
-      onClick={() => onSelect?.(item.id)}
-      className={cn(
-        "flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all hover:shadow-md",
-        !item.read && "bg-primary/5 border-primary/20",
-        item.read && "bg-card"
-      )}
+      className={`flex items-start gap-3 p-4 border-b hover:bg-gray-50 cursor-pointer transition-colors ${
+        !notification.read ? 'bg-blue-50' : ''
+      } ${isLoading ? 'opacity-50' : ''}`}
+      onClick={handleClick}
+      data-testid={`inbox-item-${notification.id}`}
     >
-      <div className="relative">
-        <Avatar className="h-10 w-10">
-          <AvatarFallback
-            className="text-xs font-semibold"
-            style={{ backgroundColor: `${platformColor}20`, color: platformColor }}
-          >
-            {item.author
-              .split(" ")
-              .map((n) => n[0])
-              .join("")
-              .slice(0, 2)}
-          </AvatarFallback>
-        </Avatar>
-        <div
-          className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center"
-          style={{ backgroundColor: platformColor }}
-        >
-          <TypeIcon className="w-2.5 h-2.5 text-white" />
-        </div>
+      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm ${config.color}`}>
+        {config.icon}
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
-          <span className="font-medium text-sm">{item.author}</span>
-          <Badge variant="secondary" className="text-[10px] capitalize">
-            {item.type}
-          </Badge>
-          {!item.read && (
-            <div className="w-2 h-2 rounded-full bg-primary shrink-0" />
+        <div className="flex items-center gap-2">
+          <p className={`text-sm font-medium truncate ${!notification.read ? 'text-gray-900' : 'text-gray-700'}`}>
+            {notification.title}
+          </p>
+          {!notification.read && (
+            <span className="flex-shrink-0 w-2 h-2 rounded-full bg-blue-600" />
           )}
         </div>
-        <p className="text-sm text-muted-foreground line-clamp-2 mb-1">
-          {item.content}
-        </p>
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <span>{formatRelativeTime(item.createdAt)}</span>
-          <span
-            className="px-1.5 py-0.5 rounded text-[10px] font-medium text-white"
-            style={{ backgroundColor: platformColor }}
-          >
-            {PLATFORMS[item.platform as keyof typeof PLATFORMS]?.name ?? item.platform}
-          </span>
-        </div>
+        <p className="text-sm text-gray-600 mt-0.5 line-clamp-2">{notification.message}</p>
+        <p className="text-xs text-gray-400 mt-1">{timeAgo}</p>
       </div>
 
-      <div className="flex items-center gap-1 shrink-0">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={(e) => {
-            e.stopPropagation();
-          }}
+      <div className="flex-shrink-0 relative">
+        <button
+          onClick={(e) => { e.stopPropagation(); setShowActions(!showActions) }}
+          className="p-1 hover:bg-gray-200 rounded"
+          aria-label="Notification actions"
         >
-          <Reply className="w-4 h-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={(e) => {
-            e.stopPropagation();
-          }}
-        >
-          {item.replied ? (
-            <CheckCheck className="w-4 h-4 text-green-500" />
-          ) : (
-            <Check className="w-4 h-4" />
-          )}
-        </Button>
+          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01" />
+          </svg>
+        </button>
+        {showActions && (
+          <div className="absolute right-0 mt-1 w-40 bg-white rounded-md shadow-lg border z-10">
+            {!notification.read && onMarkAsRead && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onMarkAsRead(notification.id); setShowActions(false) }}
+                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
+              >
+                Mark as Read
+              </button>
+            )}
+            {notification.read && onMarkAsRead && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onMarkAsRead(notification.id); setShowActions(false) }}
+                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
+              >
+                Mark as Unread
+              </button>
+            )}
+            {onDelete && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onDelete(notification.id); setShowActions(false) }}
+                className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+              >
+                Delete
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
-  );
+  )
+}
+
+export interface InboxListProps {
+  notifications: Notification[]
+  onMarkAsRead?: (id: string) => void
+  onMarkAllAsRead?: () => void
+  onDelete?: (id: string) => void
+  onAction?: (id: string, actionUrl: string) => void
+  isLoading?: boolean
+  emptyMessage?: string
+}
+
+export function InboxList({
+  notifications,
+  onMarkAsRead,
+  onMarkAllAsRead,
+  onDelete,
+  onAction,
+  isLoading = false,
+  emptyMessage = 'No notifications',
+}: InboxListProps) {
+  const unreadCount = notifications.filter((n) => !n.read).length
+
+  return (
+    <div className="rounded-lg border bg-white shadow-sm" data-testid="inbox-list">
+      <div className="flex items-center justify-between p-4 border-b">
+        <div>
+          <h3 className="font-semibold text-gray-900">Inbox</h3>
+          {unreadCount > 0 && (
+            <p className="text-xs text-gray-500">{unreadCount} unread</p>
+          )}
+        </div>
+        {unreadCount > 0 && onMarkAllAsRead && (
+          <button
+            onClick={onMarkAllAsRead}
+            className="text-sm text-blue-600 hover:text-blue-800"
+          >
+            Mark all as read
+          </button>
+        )}
+      </div>
+
+      {isLoading && notifications.length === 0 ? (
+        <div className="p-8 text-center">
+          <div className="animate-pulse space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-gray-200 rounded-full" />
+                <div className="flex-1 space-y-1">
+                  <div className="h-4 bg-gray-200 rounded w-1/3" />
+                  <div className="h-3 bg-gray-200 rounded w-2/3" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : notifications.length === 0 ? (
+        <div className="p-8 text-center text-gray-500 text-sm">
+          {emptyMessage}
+        </div>
+      ) : (
+        <div className="max-h-[600px] overflow-y-auto">
+          {notifications.map((notification) => (
+            <InboxItem
+              key={notification.id}
+              notification={notification}
+              onMarkAsRead={onMarkAsRead}
+              onDelete={onDelete}
+              onAction={onAction}
+              isLoading={isLoading}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
